@@ -25,7 +25,6 @@ from rich.progress import Progress, TextColumn, BarColumn, DownloadColumn, Trans
 
 console = Console()
 shutdown_event = threading.Event()
-_ctrl_c_count = 0
 
 APP_ID = "250528"
 BASE_URL = "https://www.terabox.com"
@@ -1109,23 +1108,28 @@ def main():
                 break
                 
             process_url_input(url_input, list_only=args.list_only)
-            # Reset Ctrl+C counter so user can interrupt next download too
-            _ctrl_c_count = 0
             console.print("")
 
 if __name__ == "__main__":
-    def _sigint_handler(sig, frame):
-        global _ctrl_c_count
-        _ctrl_c_count += 1
-        shutdown_event.set()
-        if _ctrl_c_count >= 2:
-            console.print("\n[red]✗ Force quit.[/red]")
-            os._exit(130)
-        console.print("\n[red]✗ Stopping... Press Ctrl+C again to force quit.[/red]")
-        # Raise KeyboardInterrupt to break out of blocking main-thread calls
-        raise KeyboardInterrupt
-    signal.signal(signal.SIGINT, _sigint_handler)
-    
+    if os.name == 'nt':
+        import ctypes
+        def _win_ctrl_handler(ctrl_type):
+            if ctrl_type in (0, 1): # CTRL_C_EVENT, CTRL_BREAK_EVENT
+                console.print("\n[red]✗ Interrupted by user.[/red]")
+                os._exit(130)
+            return True
+        
+        # Keep reference to handler callback to prevent garbage collection
+        _handler_prototype = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_uint)
+        _win_handler_ref = _handler_prototype(_win_ctrl_handler)
+        ctypes.windll.kernel32.SetConsoleCtrlHandler(_win_handler_ref, True)
+    else:
+        def _sigint_handler(sig, frame):
+            shutdown_event.set()
+            console.print("\n[red]✗ Interrupted by user.[/red]")
+            sys.exit(130)
+        signal.signal(signal.SIGINT, _sigint_handler)
+        
     try:
         main()
     except KeyboardInterrupt:
