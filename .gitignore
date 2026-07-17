@@ -1,0 +1,5 @@
+.env
+Downloads/
+*.log*
+*.csv
+*archive.txt

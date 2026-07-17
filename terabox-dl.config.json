@@ -1,0 +1,26 @@
+{
+  "// ─── TeraBox Downloader Configuration ───": "",
+  "// All settings here are defaults. CLI arguments always override them.": "",
+
+  "// ─── Download Settings ───": "",
+  "outputDir": "C:\\Users\\LENOVO\\Terabox-dl\\Downloads",
+  "maxRetries": 10,
+  "resume": true,
+  "timeoutSec": 600,
+
+  "// ─── Logging ───": "",
+  "// Log file path. Set to null or remove to disable logging.": "",
+  "logFile": "terabox-dl.log.csv",
+  "// Log level: 'all' logs everything, 'downloads' logs only download results, 'errors' logs only failures": "",
+  "logLevel": "all",
+
+  "// ─── Env File ───": "",
+  "// Path to .env file containing TERABOX_NDUS cookie.": "",
+  "envFile": ".env",
+
+  "// ─── Advanced ───": "",
+  "// User-Agent string sent with requests": "",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "// TeraBox app ID (change only if the API requires a different one)": "",
+  "appId": "250528"
+}
