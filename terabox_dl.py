@@ -69,7 +69,8 @@ DEFAULT_CONFIG = {
     "envFile": ".env",
     "threads": 3,
     "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "timeout": 30
+    "timeout": 30,
+    "verbose": False
 }
 
 # Statistics tracking
@@ -116,6 +117,21 @@ def get_safe_filename(name):
         import uuid
         return f"file_{uuid.uuid4().hex[:8]}"
     return clean
+
+def truncate_filename(name, max_len=40):
+    if not name or len(name) <= max_len:
+        return name
+    base, ext = os.path.splitext(name)
+    if len(ext) > 10:
+        return name[:max_len - 3] + "..."
+    avail = max_len - len(ext) - 3
+    if avail < 4:
+        return name[:max_len - 3] + "..."
+    head_len = avail // 2 + (avail % 2)
+    tail_len = avail // 2
+    if tail_len > 0:
+        return f"{base[:head_len]}...{base[-tail_len:]}{ext}"
+    return f"{base[:head_len]}...{ext}"
 
 def get_error_message(code):
     return ERROR_MESSAGES.get(code, f"Unknown API error (code: {code}).")
@@ -190,14 +206,15 @@ def load_config(custom_path=None):
     return config
 
 # Get jsToken
-def get_js_token(session, target_url=None):
+def get_js_token(session, target_url=None, verbose=False):
     urls_to_try = []
     if target_url:
         urls_to_try.append(target_url)
     urls_to_try.append(BASE_URL)
     
     for url in urls_to_try:
-        console.print(f"[yellow]⟳ Fetching jsToken from {url}...[/yellow]")
+        if verbose:
+            console.print(f"[yellow]⟳ Fetching jsToken from {url}...[/yellow]")
         try:
             resp = session.get(url, headers=HEADERS, timeout=30)
             html = resp.text
@@ -210,7 +227,8 @@ def get_js_token(session, target_url=None):
                 end_idx = html.index(end_marker, start_idx)
                 token = html[start_idx:end_idx]
                 if token:
-                    console.print(f"[green]✓ jsToken acquired ({len(token)} chars)[/green]")
+                    if verbose:
+                        console.print(f"[green]✓ jsToken acquired ({len(token)} chars)[/green]")
                     return token
                     
             # Alt pattern (without backticks)
@@ -221,41 +239,50 @@ def get_js_token(session, target_url=None):
                 end_idx = html.index(end_marker_alt, start_idx)
                 token = html[start_idx:end_idx]
                 if token:
-                    console.print(f"[green]✓ jsToken acquired via alt pattern ({len(token)} chars)[/green]")
+                    if verbose:
+                        console.print(f"[green]✓ jsToken acquired via alt pattern ({len(token)} chars)[/green]")
                     return token
                     
             # window.jsToken regex
             m = re.search(r'window\.jsToken\s*=\s*["\']([a-zA-Z0-9_.-]+)["\']', html)
             if m:
                 token = m.group(1)
-                console.print(f"[green]✓ jsToken acquired via window.jsToken ({len(token)} chars)[/green]")
+                if verbose:
+                    console.print(f"[green]✓ jsToken acquired via window.jsToken ({len(token)} chars)[/green]")
                 return token
                 
             # JSON format
             m = re.search(r'["\']jsToken["\']\s*:\s*["\']([a-zA-Z0-9_.-]+)["\']', html)
             if m:
                 token = m.group(1)
-                console.print(f"[green]✓ jsToken acquired via JSON pattern ({len(token)} chars)[/green]")
+                if verbose:
+                    console.print(f"[green]✓ jsToken acquired via JSON pattern ({len(token)} chars)[/green]")
                 return token
                 
             # fn("TOKEN") format
             m = re.search(r'fn\(\s*["\']([a-zA-Z0-9_.-]{16,})["\']\s*\)', html)
             if m:
                 token = m.group(1)
-                console.print(f"[green]✓ jsToken acquired via fn() pattern ({len(token)} chars)[/green]")
+                if verbose:
+                    console.print(f"[green]✓ jsToken acquired via fn() pattern ({len(token)} chars)[/green]")
                 return token
                 
-            console.print(f"[yellow]⚠ Could not extract jsToken from {url}.[/yellow]")
+            if verbose:
+                console.print(f"[yellow]⚠ Could not extract jsToken from {url}.[/yellow]")
         except Exception as e:
-            console.print(f"[yellow]⚠ Failed to fetch jsToken from {url}: {e}[/yellow]")
+            if verbose:
+                console.print(f"[yellow]⚠ Failed to fetch jsToken from {url}: {e}[/yellow]")
             
-    console.print("[red]✗ Could not extract jsToken from any source.[/red]")
+    if verbose:
+        console.print("[red]✗ Could not extract jsToken from any source.[/red]")
     return None
 
 # Resolve share info
 def get_share_info(session, short_url, config):
     global js_token
-    console.print("[yellow]⟳ Resolving shared link...[/yellow]")
+    verbose = config.get('verbose', False)
+    if verbose:
+        console.print("[yellow]⟳ Resolving shared link...[/yellow]")
     
     params = {
         'shorturl': short_url,
@@ -277,8 +304,9 @@ def get_share_info(session, short_url, config):
             
             # Handle jsToken refresh
             if resp_data.get('errno') in (400210, 4000023):
-                console.print("  [yellow]⚠ jsToken invalid/expired — refreshing...[/yellow]")
-                js_token = get_js_token(session, target_url=f"{BASE_URL}/s/{short_url}")
+                if verbose:
+                    console.print("  [yellow]⚠ jsToken invalid/expired — refreshing...[/yellow]")
+                js_token = get_js_token(session, target_url=f"{BASE_URL}/s/{short_url}", verbose=verbose)
                 if js_token:
                     params['jsToken'] = js_token
                     resp = session.get(url, params=params, headers=HEADERS, timeout=30)
@@ -290,7 +318,8 @@ def get_share_info(session, short_url, config):
                 write_log_entry(config['logFile'], "FAILED", share_url=f"{BASE_URL}/s/{short_url}", file_name="(resolve)", error_message=err_msg)
                 raise Exception(err_msg)
                 
-            console.print(f"[green]✓ Share resolved: {resp_data.get('title', 'Shared Files')}[/green]")
+            if verbose:
+                console.print(f"[green]✓ Share resolved: {resp_data.get('title', 'Shared Files')}[/green]")
             write_log_entry(config['logFile'], "INFO", share_url=f"{BASE_URL}/s/{short_url}", file_name=f"(resolved: {resp_data.get('title', 'Shared Files')})")
             
             return {
@@ -307,8 +336,12 @@ def get_share_info(session, short_url, config):
                 raise e
             time.sleep(1)
 
+def is_item_dir(item):
+    val = item.get('isdir')
+    return val == 1 or str(val).strip() == '1' or val is True
+
 # Get folder contents recursively
-def get_folder_contents(session, share_id, uk, sign, timestamp, directory, config):
+def get_folder_contents(session, share_id, uk, sign, timestamp, directory, config, target_url=None):
     global js_token
     all_items = []
     current_page = 1
@@ -339,7 +372,10 @@ def get_folder_contents(session, share_id, uk, sign, timestamp, directory, confi
             resp_data = resp.json()
             
             if resp_data.get('errno') in (400210, 4000023):
-                js_token = get_js_token(session, target_url=f"{BASE_URL}/s/{short_url}")
+                verbose = config.get('verbose', False) if config else False
+                if verbose:
+                    console.print("  [yellow]⚠ jsToken invalid/expired — refreshing...[/yellow]")
+                js_token = get_js_token(session, target_url=target_url if target_url else BASE_URL, verbose=verbose)
                 if js_token:
                     params['jsToken'] = js_token
                     resp = session.get(url, params=params, headers=HEADERS, timeout=30)
@@ -371,34 +407,36 @@ def invoke_process_items(items, dest_dir, session, share_id, uk, sign, timestamp
         
     indent = "  " * depth
     for item in items:
-        is_dir = item.get('isdir') == 1
+        is_dir = is_item_dir(item)
         
         if is_dir:
             folder_name = item.get('server_filename')
+            disp_folder = truncate_filename(folder_name, 45)
             folder_path = item.get('path')
             
-            console.print(f"{indent}[yellow]📁 {folder_name}/[/yellow]")
+            console.print(f"{indent}[yellow]📁 {disp_folder}/[/yellow]")
             
             sub_dir = dest_dir
             if not list_only:
                 sub_dir = os.path.join(dest_dir, folder_name)
                 os.makedirs(sub_dir, exist_ok=True)
                 
-            sub_items = get_folder_contents(session, share_id, uk, sign, timestamp, folder_path, config)
+            sub_items = get_folder_contents(session, share_id, uk, sign, timestamp, folder_path, config, target_url=url)
             if sub_items:
                 invoke_process_items(sub_items, sub_dir, session, share_id, uk, sign, timestamp, randsk, url, list_only, config, depth + 1)
             else:
                 console.print(f"{indent}[grey50]  (empty folder)[/grey50]")
         else:
             name = item.get('server_filename')
+            disp_name = truncate_filename(name, 45)
             size_bytes = int(item.get('size', 0))
             size_str = format_file_size(size_bytes)
             stats['TotalFiles'] += 1
             
             if list_only:
-                console.print(f"{indent}📄 {name}  ({size_str})")
+                console.print(f"{indent}📄 {disp_name}  ({size_str})")
             else:
-                console.print(f"{indent}[grey50]📄 {name}  ({size_str}) [queued][/grey50]")
+                console.print(f"{indent}[grey50]📄 {disp_name}  ({size_str}) [queued][/grey50]")
                 download_queue.append({
                     'FileItem': item,
                     'DestDir': dest_dir,
@@ -491,6 +529,7 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
     url = queue_item['Url']
     
     file_name = get_safe_filename(file_item.get('server_filename'))
+    disp_name = truncate_filename(file_name, 35)
     file_size = int(file_item.get('size', 0))
     dlink = file_item.get('dlink')
     
@@ -512,17 +551,17 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
     if not dlink:
         if share_id and uk and sign and timestamp and randsk:
             if progress:
-                progress.update(task_id, description=f"[yellow]⟳ Link: {file_name}[/yellow]", visible=True)
+                progress.update(task_id, description=f"[yellow]⟳ Link: {disp_name}[/yellow]", visible=True)
             else:
-                console.print(f"  [yellow]⟳ Fetching direct link for '{file_name}'...[/yellow]")
+                console.print(f"  [yellow]⟳ Fetching direct link for '{disp_name}'...[/yellow]")
                 
             dlink = get_terabox_download_link(session, file_item.get('fs_id'), share_id, uk, sign, timestamp, randsk, headers, config['timeout'])
             
     if not dlink:
         if progress:
-            progress.update(task_id, description=f"[red]✗ Failed: {file_name}[/red]", visible=False)
+            progress.update(task_id, description=f"[red]✗ Failed: {disp_name}[/red]", visible=False)
         else:
-            console.print(f"  [red]⚠ No download link available for '{file_name}' — skipping.[/red]")
+            console.print(f"  [red]⚠ No download link available for '{disp_name}' — skipping.[/red]")
         return {
             'Status': 'FAILED',
             'FileName': file_name,
@@ -547,8 +586,9 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
                 if not os.path.exists(new_path):
                     dest_path = new_path
                     file_name = os.path.basename(dest_path)
+                    disp_name = truncate_filename(file_name, 35)
                     if progress:
-                        progress.update(task_id, description=f"[yellow]↓ Renamed: {file_name}[/yellow]")
+                        progress.update(task_id, description=f"[yellow]↓ Renamed: {disp_name}[/yellow]")
                     break
                 elif os.path.getsize(new_path) >= file_size:
                     # This renamed copy also exists with same/larger size, try next number
@@ -557,6 +597,7 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
                     # Partial download of this renamed file — resume it
                     dest_path = new_path
                     file_name = os.path.basename(dest_path)
+                    disp_name = truncate_filename(file_name, 35)
                     break
         # else: existing file is smaller = partial download, will be resumed in retry loop
             
@@ -571,7 +612,7 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
                     # This dest_path was just auto-renamed above, so this shouldn't happen
                     # unless file appeared between rename and here — treat as complete
                     if progress:
-                        progress.update(task_id, description=f"[grey50]⊘ Complete: {file_name}[/grey50]", completed=file_size, visible=False)
+                        progress.update(task_id, description=f"[grey50]⊘ Complete: {disp_name}[/grey50]", completed=file_size, visible=False)
                     return {
                         'Status': 'SKIPPED',
                         'FileName': file_name,
@@ -585,17 +626,17 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
             if resume_pos > 0:
                 dl_headers['Range'] = f"bytes={resume_pos}-"
                 if progress:
-                    progress.update(task_id, description=f"[cyan]↓ Resume: {file_name}[/cyan]", completed=resume_pos, visible=True)
+                    progress.update(task_id, description=f"[cyan]↓ Resume: {disp_name}[/cyan]", completed=resume_pos, visible=True)
                 else:
                     remain_str = format_file_size(file_size - resume_pos)
-                    console.print(f"  [cyan]↓ Resuming: {file_name} ({remain_str} remaining)[/cyan]")
+                    console.print(f"  [cyan]↓ Resuming: {disp_name} ({remain_str} remaining)[/cyan]")
             else:
                 if progress:
-                    progress.update(task_id, description=f"[cyan]↓ DL: {file_name}[/cyan]", completed=0, visible=True)
+                    progress.update(task_id, description=f"[cyan]↓ DL: {disp_name}[/cyan]", completed=0, visible=True)
                 else:
                     size_str = format_file_size(file_size)
                     retry_suffix = f" [retry {attempt}/{max_retries}]" if attempt > 1 else ""
-                    console.print(f"  [cyan]↓ Downloading: {file_name} ({size_str}){retry_suffix}[/cyan]")
+                    console.print(f"  [cyan]↓ Downloading: {disp_name} ({size_str}){retry_suffix}[/cyan]")
                     
             dl_start_time = time.time()
             resp = session.get(dlink, headers=dl_headers, stream=True, timeout=config['timeout'])
@@ -646,9 +687,9 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
                         console.print(f"  [yellow]⚠ Size mismatch: expected {file_size}, got {dl_size}[/yellow]")
                     else:
                         if progress:
-                            progress.update(task_id, description=f"[green]✓ Saved: {file_name}[/green]", visible=False)
+                            progress.update(task_id, description=f"[green]✓ Saved: {disp_name}[/green]", visible=False)
                         else:
-                            console.print(f"  [green]✓ Saved: {file_name} ({format_file_size(dl_size)}, {speed_str})[/green]")
+                            console.print(f"  [green]✓ Saved: {disp_name} ({format_file_size(dl_size)}, {speed_str})[/green]")
                             
                     return {
                         'Status': 'SUCCESS',
@@ -665,13 +706,13 @@ def download_file_worker(queue_item, session, headers, config, progress=None, ta
             if attempt < max_retries:
                 wait_sec = 2**attempt + (time.time() % 2)
                 if progress:
-                    progress.update(task_id, description=f"[yellow]⚠ Retry: {file_name}[/yellow]")
+                    progress.update(task_id, description=f"[yellow]⚠ Retry: {disp_name}[/yellow]")
                 else:
                     console.print(f"  [yellow]⚠ Attempt {attempt} failed: {err_msg}. Retrying in {wait_sec:.1f}s...[/yellow]")
                 time.sleep(wait_sec)
             else:
                 if progress:
-                    progress.update(task_id, description=f"[red]✗ Failed: {file_name}[/red]", visible=False)
+                    progress.update(task_id, description=f"[red]✗ Failed: {disp_name}[/red]", visible=False)
                 else:
                     console.print(f"  [red]✗ Download failed after {max_retries} attempts: {err_msg}[/red]")
                     
@@ -726,6 +767,7 @@ def main():
     parser.add_argument("-t", "--threads", type=int, default=-1, help="Number of download threads")
     parser.add_argument("-i", "--interactive", action="store_true", help="Interactive item selector")
     parser.add_argument("-c", "--config", help="Custom configuration JSON path")
+    parser.add_argument("-v", "--verbose", action="store_true", help="Show verbose output (e.g. token acquisition and detailed resolving)")
     args = parser.parse_args()
     
     # Load config file
@@ -765,6 +807,9 @@ def main():
         
     if args.interactive:
         config['interactive'] = True
+        
+    if args.verbose:
+        config['verbose'] = True
     
     # Resolve relative paths to script directory (not CWD)
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -897,7 +942,7 @@ def main():
                 
                 # Fetch jsToken if not loaded
                 if not js_token:
-                    js_token = get_js_token(session, target_url=f"{BASE_URL}/s/{short_url_key}")
+                    js_token = get_js_token(session, target_url=f"{BASE_URL}/s/{short_url_key}", verbose=config.get('verbose', False))
                     
                 share_info = get_share_info(session, short_url_key, config)
                 file_list = share_info.get('FileList', [])
@@ -907,10 +952,11 @@ def main():
                     console.print("\n[bold cyan]Select files to download:[/bold cyan]")
                     for i, item in enumerate(file_list, start=1):
                         name = item.get('server_filename')
-                        is_dir = item.get('isdir') == 1
+                        disp_name = truncate_filename(name, 45)
+                        is_dir = is_item_dir(item)
                         type_prefix = "📁" if is_dir else "📄"
                         size_str = f" ({format_file_size(int(item.get('size', 0)))})" if not is_dir else ""
-                        console.print(f"  [[bold green]{i}[/bold green]] {type_prefix} {name}{size_str}")
+                        console.print(f"  [[bold green]{i}[/bold green]] {type_prefix} {disp_name}{size_str}")
                         
                     sel_input = console.input("\nEnter selection (e.g. 1,3,5-8 or press Enter for all): ")
                     selected_indices = parse_selection(sel_input, len(file_list))
@@ -922,9 +968,9 @@ def main():
                     file_list = [file_list[idx] for idx in selected_indices]
                     
                 # Process & Traverse folder trees
-                total_files = len([x for x in file_list if x.get('isdir') != 1])
-                total_folders = len([x for x in file_list if x.get('isdir') == 1])
-                total_size = sum([int(x.get('size', 0)) for x in file_list if x.get('isdir') != 1])
+                total_files = len([x for x in file_list if not is_item_dir(x)])
+                total_folders = len([x for x in file_list if is_item_dir(x)])
+                total_size = sum([int(x.get('size', 0)) for x in file_list if not is_item_dir(x)])
                 
                 console.print(f"   Contents: {total_files} files, {total_folders} folders ({format_file_size(total_size)})", style="grey50")
                 
@@ -965,8 +1011,9 @@ def main():
                             if shutdown_event.is_set():
                                 break
                             file_name = get_safe_filename(item['FileItem'].get('server_filename'))
+                            disp_name = truncate_filename(file_name, 35)
                             file_size = int(item['FileItem'].get('size', 0))
-                            task_id = progress.add_task(f"[cyan]↓ DL: {file_name}[/cyan]", total=file_size, visible=True)
+                            task_id = progress.add_task(f"[cyan]↓ DL: {disp_name}[/cyan]", total=file_size, visible=True)
                             res = download_file_worker(item, session, HEADERS, config, progress, task_id)
                             results.append(res)
                 except KeyboardInterrupt:
@@ -988,9 +1035,10 @@ def main():
                         with ThreadPoolExecutor(max_workers=threads) as executor:
                             for item in download_queue:
                                 file_name = get_safe_filename(item['FileItem'].get('server_filename'))
+                                disp_name = truncate_filename(file_name, 35)
                                 file_size = int(item['FileItem'].get('size', 0))
                                 
-                                task_id = progress.add_task(f"[cyan]↓ Queued: {file_name}[/cyan]", total=file_size, visible=False)
+                                task_id = progress.add_task(f"[cyan]↓ Queued: {disp_name}[/cyan]", total=file_size, visible=False)
                                 future = executor.submit(download_file_worker, item, session, HEADERS, config, progress, task_id)
                                 futures[future] = item
                                 
