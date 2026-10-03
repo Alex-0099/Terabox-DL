@@ -1,182 +1,193 @@
-# TeraBox Downloader CLI — User Guide
+# TeraBox Downloader CLI (v2.1)
 
-A highly resilient PowerShell Core (`pwsh`) command-line tool designed to list and recursively download files and folders from TeraBox shared links using unofficial APIs and cookie authentication.
+A high-performance, cross-platform command-line tool designed to list, resolve, and recursively download files and folders from TeraBox shared links using unofficial APIs, session authentication, and multi-threaded stream downloading.
 
----
-
-## Features
-- **Recursive Downloads:** Recreates complete folder structures locally.
-- **Dynamic Dlink Resolution:** Generates direct download links on-the-fly using the `/api/sharedownload` endpoint to avoid expired link errors.
-- **Resilient Retry Loop:** Defaults to 10 retry attempts with exponential backoff to handle unstable networks.
-- **Resume Support:** Automatically resumes interrupted files using HTTP Range headers instead of starting over.
-- **Drive Fallback:** Safely redirects downloads to the script directory if the configured download drive (e.g. `D:`) is not found.
-- **Archive Database:** Bypasses fully downloaded links instantly, reducing API traffic and script execution time.
-- **Real-Time Speed Meter:** Displays downloading speed (in KB/s or MB/s), percentage progress, and byte count dynamically in the terminal.
+Works seamlessly on **Windows**, **Linux**, and **macOS**.
 
 ---
 
-## 1. Prerequisites
-- **PowerShell Core (v7.x or later):** Recommended for native TLS 1.3 support and Unix compatibility.
-- **Active Cookie Session:** A valid `ndus` cookie from a logged-in TeraBox account.
+## Key Features in v2.1
+
+- ⚡ **Multi-Threaded Parallel Downloads:** Download multiple files simultaneously with individual Rich progress bars (`--threads`).
+- 📁 **Full Recursive Folder Support:** Correctly identifies shared directories and recreates nested folder hierarchies locally.
+- 💬 **Interactive Prompt Loop:** Run `terabox-dl` without arguments to enter an interactive session for continuous URL downloading without restarting.
+- 🎯 **Interactive Item Selector:** Filter and pick specific files or folders before downloading (`--interactive` / `-i`).
+- 🔄 **Resilient Resume & Retry:** Automatically resumes broken or interrupted downloads using HTTP `Range` headers with exponential backoff retry.
+- 🏷️ **Smart Duplicate Collision Handling:** Automatically renames files (e.g. `video(1).mp4`) when identical names exist across different links instead of skipping or overwriting.
+- 📦 **Instant Archive Skipping:** Pre-filters links against `terabox-dl.archive.txt` before making network calls, avoiding unnecessary API queries for completed items.
+- 🧹 **Clean Terminal UI by Default:** Hides noisy token acquisition and internal API resolution lines unless verbose mode (`-v`) is enabled.
+- 📏 **Smart Terminal Truncation:** Truncates long file names with `...` while preserving extensions to ensure clean, aligned single-line progress bars.
+- 🛑 **Immediate Interrupt:** Native Windows (`ctypes`) and Unix signal handling to abort immediately on `Ctrl+C` without thread hanging.
 
 ---
 
-## 2. Configuration & Setup
+## 1. Prerequisites & Installation
 
-The script loads configuration in the following order of priority (highest priority overrides lowest):
-1. **Command-Line Arguments** (e.g., `-OutputDir`, `-NdusCookie`, etc.)
+### Requirements
+- **Python 3.8+**
+
+### Install Dependencies
+Clone or download this repository, navigate to the folder, and run:
+```bash
+pip install -r requirements.txt
+```
+*(Or manually install: `pip install requests python-dotenv rich`)*
+
+---
+
+## 2. Configuration & Authentication
+
+The tool reads configuration in this priority order (highest overrides lowest):
+1. **Command-Line Arguments** (e.g., `-o`, `-n`, `-t`, etc.)
 2. **`terabox-dl.config.json`** (local configuration file)
-3. **`.env`** (environment file for credentials)
-4. **System Environment Variables** (e.g. `$env:TERABOX_NDUS`)
-5. **Built-in Script Defaults**
+3. **`.env`** (credentials file)
+4. **Environment Variables** (`$env:TERABOX_NDUS` or `export TERABOX_NDUS`)
+5. **Built-in Defaults**
 
-### Step A: Configure your `.env` file
-Create or edit the `.env` file next to the script to store your session cookie safely:
+### Step A: Set up your `.env` File
+Create or edit the `.env` file in the script directory:
 ```env
 TERABOX_NDUS=your_copied_ndus_cookie_value
 ```
 
-### Step B: Configure settings in `terabox-dl.config.json`
-Adjust global settings such as fallback limits, directories, and logging paths:
+### Step B: How to Get Your `ndus` Cookie
+1. Log in to [terabox.com](https://www.terabox.com) in your browser.
+2. Open Developer Tools (press **F12** or right-click -> **Inspect**).
+3. Open the **Application** tab (Chrome/Edge) or **Storage** tab (Firefox).
+4. Under **Cookies**, select `https://www.terabox.com`.
+5. Locate the **`ndus`** cookie, copy its entire value, and paste it into your `.env` file.
+
+### Step C: Customize Settings (Optional)
+Edit `terabox-dl.config.json` to change default behaviors:
 ```json
 {
-  "outputDir": "D:\\Downloads\\TeraBox",
-  "maxRetries": 10,
+  "outputDir": "Downloads",
+  "maxRetries": 3,
   "resume": true,
-  "timeoutSec": 600,
+  "threads": 3,
+  "timeout": 30,
+  "verbose": false,
   "logFile": "terabox-dl.log.csv",
-  "logLevel": "all",
-  "envFile": ".env",
   "archiveFile": "terabox-dl.archive.txt",
-  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "envFile": ".env",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   "appId": "250528"
 }
 ```
 
 ---
 
-## 3. How to Get Your `ndus` Cookie
-1. Log in to [terabox.com](https://www.terabox.com) in your web browser.
-2. Open Developer Tools (press **F12** or right-click and select **Inspect**).
-3. Go to the **Application** (Chrome/Edge) or **Storage** (Firefox) tab.
-4. Expand **Cookies** in the left sidebar and select `https://www.terabox.com`.
-5. Locate the cookie named **`ndus`**. Double-click and copy its complete value.
-6. Paste it into the `TERABOX_NDUS` variable in your `.env` file.
+## 3. Usage & Examples
 
----
+You can run the script directly via `python terabox_dl.py` or use the included launcher aliases (`terabox-dl`).
 
-## 4. Usage Examples
-
-Always execute the script using PowerShell Core (`pwsh`). Run commands from the directory containing the script.
-
-### Single Link Downloads
-Download all contents of a shared link into the default output directory:
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ"
-```
-
-### Batch Mode (List File)
-To download multiple links sequentially, create a text file (e.g., `links.txt`) with one URL per line. Use `#` for comments:
-```text
-# Family Vacations
-https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ
-# Project Deliverables
-https://www.terabox.com/s/another_link_here
-```
-Pass the text file path directly into the `-Url` parameter:
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url ".\links.txt"
-```
-
-### List-Only Mode
-List files and directory structures without executing any downloads:
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" -ListOnly
-```
-
-### Custom Output Directory
-Override the config file download directory via command line:
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" -OutputDir "C:\Users\Public\Downloads"
-```
-
-### Override Retry Attempts
-Increase or decrease the maximum number of network/download retries:
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" -MaxRetries 15
-```
-
-### Disable Archiving or Resuming
-Disable checking or writing to the completed link database:
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" -NoArchive
-```
-Disable file resumption (forces downloading partially completed files from scratch):
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" -NoResume
-```
-
-### Interactive Selector Menu
-Filter files and folders interactively before starting downloads:
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" -Interactive
-```
-
-### Parallel / Concurrent Downloads
-Download multiple files concurrently to maximize download bandwidth (e.g. 3 threads):
-```powershell
-pwsh -File .\Terabox-dl.ps1 -Url "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" -Threads 3
-```
-*Note: You can also configure `"threads": 3` inside your `terabox-dl.config.json` file for permanent parallel processing.*
-
----
-
-## 5. Python Guide (`terabox_dl.py`)
-
-A fully cross-platform Python port of the downloader. It supports Windows, macOS, and Linux out-of-the-box.
-
-### Step 1: Install Prerequisites
-Install the required standard libraries:
+### 1. Interactive Loop Mode
+Run without arguments to enter an interactive session. Paste links one by one; press `Ctrl+C` or type `exit` to quit:
 ```bash
-pip install requests python-dotenv rich
+terabox-dl
 ```
 
-### Step 2: Usage Examples
-Always run the script using Python 3:
-
+### 2. Single Link Download
+Download all files/folders from a shared link:
 ```bash
-# Single link download
-python terabox_dl.py "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ"
+terabox-dl "https://1024terabox.com/s/1y7jen-bPZdcBmQvcrpAUSQ"
+```
 
-# Batch download (extracts and downloads all links from tb.txt)
-python terabox_dl.py ".\tb.txt"
+### 3. Batch Download via Text File
+Download multiple links sequentially from a text file (one URL per line, lines with `#` are ignored):
+```bash
+terabox-dl "links.txt"
+```
 
-# List contents only (no download)
-python terabox_dl.py "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" --list-only
+### 4. List-Only Mode (No Download)
+Inspect shared link contents and folder hierarchies without downloading:
+```bash
+terabox-dl "https://1024terabox.com/s/1y7jen-bPZdcBmQvcrpAUSQ" -l
+```
 
-# Interactive selection
-python terabox_dl.py "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" --interactive
+### 5. Multi-Threaded Parallel Downloads
+Specify how many files to download concurrently (e.g. 5 threads):
+```bash
+terabox-dl "https://1024terabox.com/s/1y7jen-bPZdcBmQvcrpAUSQ" -t 5
+```
 
-# Download concurrently with custom threads (e.g. 5 threads)
-python terabox_dl.py "https://www.terabox.com/s/1yR1wZ9tiQm4bTv3DRMnQoQ" --threads 5
+### 6. Interactive File Selection
+Choose specific files or folders to download using numbers (e.g. `1,3,5-8`):
+```bash
+terabox-dl "https://1024terabox.com/s/1y7jen-bPZdcBmQvcrpAUSQ" -i
+```
+
+### 7. Verbose Diagnostics Mode
+Show detailed internal API operations, jsToken extraction, and share resolving logs:
+```bash
+terabox-dl "https://1024terabox.com/s/1y7jen-bPZdcBmQvcrpAUSQ" -v
+```
+
+### 8. Custom Output Directory
+Override the target download destination:
+```bash
+terabox-dl "https://1024terabox.com/s/1y7jen-bPZdcBmQvcrpAUSQ" -o "D:\Media"
 ```
 
 ---
 
-## 6. Troubleshooting SSL/TLS Interception
+## 4. CLI Arguments Reference
 
-If you encounter connection reset errors, it is usually caused by network-level deep packet inspection (DPI) or censorship (common in regions where Baidu/TeraBox domains are blocked). The ISP middlebox forcibly resets the connection during the TLS handshake.
+| Option | Long Flag | Description |
+| :--- | :--- | :--- |
+| `url` | *(positional)* | Direct TeraBox share link or path to `.txt` file containing URLs |
+| `-l` | `--list-only` | List files and folder contents without downloading |
+| `-t` | `--threads` | Number of concurrent download workers (default: `3`) |
+| `-i` | `--interactive` | Prompt to pick specific files/folders to download |
+| `-v` | `--verbose` | Display verbose token acquisition and resolution diagnostics |
+| `-o` | `--output` | Directory where downloaded files will be saved |
+| `-n` | `--ndus` | Pass `ndus` session cookie directly from the command line |
+| `-r` | `--max-retries` | Max retry attempts per file upon network failure (default: `3`) |
+| | `--no-resume` | Disable resume capability (forces full redownload) |
+| | `--no-archive` | Disable skipping links recorded in `terabox-dl.archive.txt` |
+| | `--no-log` | Disable writing download sessions to `terabox-dl.log.csv` |
+| `-c` | `--config` | Path to a custom JSON configuration file |
 
-**Solutions:**
-1. **Re-Run the Command:** Because the ISP interception is highly unstable, retrying (or simply starting the script again) will resume the download from where it failed.
-2. **Use a Proxy/VPN:** You can route all script HTTP traffic through a local proxy or VPN by declaring environment variables in your terminal window before running the script:
-   * **PowerShell:**
-     ```powershell
-     $env:http_proxy = "http://127.0.0.1:YOUR_PROXY_PORT"
-     $env:https_proxy = "http://127.0.0.1:YOUR_PROXY_PORT"
-     ```
-   * **Bash (Linux/macOS):**
-     ```bash
-     export http_proxy="http://127.0.0.1:YOUR_PROXY_PORT"
-     export https_proxy="http://127.0.0.1:YOUR_PROXY_PORT"
-     ```
+---
+
+## 5. Shell Integration & Aliases
+
+### Windows (PowerShell)
+Place `Terabox-dl.ps1` in your directory (or a folder on your system `$PATH`), then invoke directly:
+```powershell
+terabox-dl "https://..."
+```
+
+### Windows (Command Prompt / CMD)
+Use `terabox-dl.bat`:
+```cmd
+terabox-dl "https://..."
+```
+
+### Linux / macOS
+Add an alias to your `~/.bashrc` or `~/.zshrc`:
+```bash
+alias terabox-dl="python3 /path/to/Terabox-dl/terabox_dl.py"
+```
+
+---
+
+## 6. Troubleshooting & FAQs
+
+### Q: Download fails or gets connection reset error?
+Network-level Deep Packet Inspection (DPI) or censorship may block TeraBox domains.
+* **Auto-Resume:** Simply run the command again; it will automatically resume from the last saved byte.
+* **Proxy / VPN:** Configure your terminal proxy before running the script:
+  * **PowerShell:**
+    ```powershell
+    $env:http_proxy="http://127.0.0.1:YOUR_PORT"
+    $env:https_proxy="http://127.0.0.1:YOUR_PORT"
+    ```
+  * **Linux / macOS:**
+    ```bash
+    export http_proxy="http://127.0.0.1:YOUR_PORT"
+    export https_proxy="http://127.0.0.1:YOUR_PORT"
+    ```
+
+### Q: "Access denied — cookie may be invalid or expired"?
+Your TeraBox `ndus` cookie has expired. Log back into [terabox.com](https://www.terabox.com) in your web browser and update the `TERABOX_NDUS` value in your `.env` file.

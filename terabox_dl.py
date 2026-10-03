@@ -748,7 +748,7 @@ def main():
     # Print banner
     console.print("")
     console.print("╔══════════════════════════════════════════╗", style="cyan")
-    console.print("║         TeraBox Downloader v2.2          ║", style="cyan")
+    console.print("║         TeraBox Downloader v2.1          ║", style="cyan")
     console.print("║     Unofficial API · Cookie Auth         ║", style="cyan")
     console.print("║  Config · .env · Log · Retry · Resume    ║", style="cyan")
     console.print("╚══════════════════════════════════════════╝", style="cyan")
